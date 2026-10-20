@@ -374,6 +374,8 @@ The bundled binary also has a blocking command-line subcommand, so an agent can 
 project-issues wait-pipeline --project <id> --sha <commit> [--timeout 600] [--interval 20]
 ```
 
+`--sha` also accepts an abbreviated sha on GitHub and Azure DevOps; it is expanded to the full commit sha before the runs are filtered.
+
 That is the Linux/macOS name (and works in PowerShell/cmd on Windows). In bash on Windows (Git Bash) the bare name resolves to the Linux binary in `bin/` and fails with rc 126, because bash never falls back to `.exe`; use `project-issues.exe` there. A name that fails with rc 126/127 is the wrong name, not a wrong-architecture install. Resolve it portably:
 
 ```bash

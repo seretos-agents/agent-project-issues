@@ -579,6 +579,8 @@ use `project-issues.exe`, see below):
 project-issues wait-pipeline --project <id> --sha <commit> --timeout 540 --interval 20
 ```
 
+`--sha` also accepts an abbreviated sha on GitHub and Azure DevOps.
+
 Pass `timeout: 600000` (milliseconds) on that Bash call. The CLI's own
 default is 600 seconds, which would race a 600 second tool cap, so
 always pass `--timeout 540` explicitly. Do not background the call.

@@ -164,7 +164,7 @@ def register(mcp: FastMCP) -> None:
         project_id: str,
         branch: Annotated[str | None, Field(description="One-of addressing argument. Exactly one of branch/tag/commit_sha/ticket_id/recent must be set. Filter runs by branch name (e.g. 'main').")] = None,
         tag: Annotated[str | None, Field(description="One-of addressing argument. Exactly one of branch/tag/commit_sha/ticket_id/recent must be set. Resolves tag to commit SHA, then lists runs for that SHA.")] = None,
-        commit_sha: Annotated[str | None, Field(description="One-of addressing argument. Exactly one of branch/tag/commit_sha/ticket_id/recent must be set. Lists runs filtered by head_sha.")] = None,
+        commit_sha: Annotated[str | None, Field(description="One-of addressing argument. Exactly one of branch/tag/commit_sha/ticket_id/recent must be set. Lists runs filtered by head_sha. On GitHub and Azure DevOps an abbreviated sha is expanded to the full commit sha before filtering.")] = None,
         ticket_id: Annotated[str | None, Field(description="One-of addressing argument. Exactly one of branch/tag/commit_sha/ticket_id/recent must be set. Walks the ticket's timeline to collect head_shas and aggregates runs.")] = None,
         recent: Annotated[bool, Field(description="One-of addressing argument. When True (and no other addressing arg is set), lists the most recent runs across the project with no ref filter. Exactly one of branch/tag/commit_sha/ticket_id/recent must be set.")] = False,
         status: Literal["queued", "in_progress", "completed", "all"] = "all",
@@ -178,7 +178,9 @@ def register(mcp: FastMCP) -> None:
         Exactly ONE addressing argument must be set:
           - `branch`: list runs filtered by branch name (e.g. `main`).
           - `tag`: resolves tag -> commit SHA, then lists runs for that SHA.
-          - `commit_sha`: lists runs filtered by `head_sha`.
+          - `commit_sha`: lists runs filtered by `head_sha`. On GitHub and
+            Azure DevOps an abbreviated sha is expanded to the full commit
+            sha before filtering.
           - `ticket_id`: walks the ticket's timeline / referenced PRs to
             collect head_shas, then aggregates runs across them. When a
             ticket has no linked PR / branch, returns `runs=[]` and a
