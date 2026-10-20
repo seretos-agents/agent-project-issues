@@ -748,8 +748,13 @@ def test_dispatch_workflow_mirrors_release_workflow_changelog_logic() -> None:
             f"{name}: dispatch step env: block missing "
             f"`GH_TOKEN: ${{{{ secrets.GITHUB_TOKEN }}}}`, got:\n{env_block!r}"
         )
-        assert "GH_PAT" in env_block, (
-            f"{name}: dispatch step env: block missing GH_PAT, got:\n{env_block!r}"
+        assert re.search(
+            r"^\s*GH_PAT:\s*\$\{\{\s*secrets\.ECOSYSTEM_TOKEN\s*\}\}\s*$",
+            env_block,
+            re.M,
+        ), (
+            f"{name}: dispatch step env: block must map "
+            f"`GH_PAT: ${{{{ secrets.ECOSYSTEM_TOKEN }}}}`, got:\n{env_block!r}"
         )
         assert set(re.findall(r"secrets\.(\w+)", env_block)) == {
             "GITHUB_TOKEN",
