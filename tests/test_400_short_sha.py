@@ -96,7 +96,22 @@ def _ado_handler(request: httpx.Request) -> httpx.Response:
                         "queueTime": "2024-01-01T00:00:00Z",
                         "finishTime": "2024-01-01T00:05:00Z",
                         "_links": {"web": {"href": "https://dev.azure.com/org/proj/_build/results?buildId=202"}},
-                    }
+                    },
+                    # A build of a different commit: must be filtered out, so
+                    # a missing/ignored sha filter yields 2 runs, not 1.
+                    {
+                        "id": 203,
+                        "buildNumber": "203",
+                        "status": "completed",
+                        "result": "failed",
+                        "sourceVersion": "0" * 40,
+                        "sourceBranch": "refs/heads/main",
+                        "definition": {"id": 7, "name": "CI"},
+                        "reason": "manual",
+                        "queueTime": "2024-01-02T00:00:00Z",
+                        "finishTime": "2024-01-02T00:05:00Z",
+                        "_links": {"web": {"href": "https://dev.azure.com/org/proj/_build/results?buildId=203"}},
+                    },
                 ]
             }
         )

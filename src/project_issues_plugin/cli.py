@@ -73,7 +73,7 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--project", required=True, help="project id from projects.yml")
-    parser.add_argument("--sha", required=True, help="commit sha to wait for")
+    parser.add_argument("--sha", required=True, help="commit sha to wait for (a short sha is accepted on GitHub and Azure DevOps)")
     parser.add_argument(
         "--timeout", type=float, default=600.0,
         help="seconds to wait at most (default 600)",
