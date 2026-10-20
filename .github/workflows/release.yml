@@ -486,7 +486,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_PAT:   ${{ secrets.MARKETPLACE_DISPATCH_TOKEN }}
+          GH_PAT:   ${{ secrets.ECOSYSTEM_TOKEN }}
           VERSION:  ${{ inputs.version }}
         run: |
           DESC=$(jq -r '.description' .claude-plugin/plugin.json)
