@@ -22,6 +22,8 @@ projects:
     #   gitlab: full namespace, e.g. "group/sub/project"
     path: acme/backend
     token_env: GITHUB_TOKEN_ACME
+    # Optional local checkout: relative paths resolve against this file's directory, absolute paths are kept as-is.
+    local_path: projects/backend
     # Optional: let `list_board_columns` and the `column` filter reason
     # about this project's board in provider-agnostic logical names.
     # Supported on GitHub (Projects v2) and Azure DevOps (Azure Boards)

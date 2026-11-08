@@ -142,3 +142,14 @@ def test_config_example_documents_board_manage_flag() -> None:
         "expected a commented `manage: false` under both board-carrying "
         "permissions blocks (acme-backend, acme-ado-frontend)"
     )
+
+
+def test_example_local_path_resolves_under_config_dir(
+    loaded_example_config, tmp_path: Path,
+) -> None:
+    """#408: `acme-backend` carries a live relative `local_path`; the loader
+    anchors it at the config file's directory (`.seretos/`)."""
+    project = _by_id(loaded_example_config, "acme-backend")
+    expected = (tmp_path / ".seretos" / "projects" / "backend").resolve()
+    assert project.local_path is not None
+    assert Path(project.local_path) == expected
