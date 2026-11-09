@@ -266,6 +266,8 @@ _NON_TOOL_WHITELIST = {
     # Added by ticket #365 (label-mode board-state fallback — `board`
     # config fields, none of which are tool names themselves):
     "binding", "closed_column", "label_map",
+    # Added by ticket #410 (zero-jobs failed-run guidance - response field):
+    "failing_jobs",
 }
 
 
