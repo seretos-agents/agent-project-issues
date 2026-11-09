@@ -18,6 +18,7 @@ explicitly) is unaffected.
 from __future__ import annotations
 
 import json
+import re
 from typing import Callable
 
 import httpx
@@ -1508,6 +1509,53 @@ def test_get_pipeline_run_jobs_none_failed_note_suggests_rerun(
     assert "none ended failure/cancelled" in failure["note"]
 
 
+_NEGATION = re.compile(r"\b(do not|don't|dont|never|not|no)\b")
+_RERUN_INSTRUCTION = re.compile(
+    r"\b(re-?run|retry)\w*\b[^.;]*?trigger_pipeline", re.IGNORECASE
+)
+_NOT_ESCALATING = re.compile(r"\b(instead of|rather than) escalat", re.IGNORECASE)
+
+
+def _explains_zero_jobs_rerun(par: str) -> bool:
+    """True if one paragraph affirmatively tells the agent to re-run via
+    trigger_pipeline instead of escalating a zero-job failed run."""
+    par = " ".join(par.split())
+    low = par.lower()
+    if not (
+        "failing_jobs" in par
+        and ("empty" in low or "[]" in par)
+        and "0 jobs" in par
+        and "infrastructure" in low
+    ):
+        return False
+    for m in _RERUN_INSTRUCTION.finditer(par):
+        before = " ".join(par[: m.start()].split()[-4:]).lower()
+        if _NEGATION.search(before) or _NEGATION.search(m.group(0).lower()):
+            continue
+        if _NOT_ESCALATING.search(par, m.end()):
+            return True
+    return False
+
+
+def test_zero_jobs_rerun_predicate_rejects_inverted_and_accepts_good() -> None:
+    inverted = (
+        "Do NOT re-run with trigger_pipeline; escalate to a human instead. "
+        "failing_jobs empty, 0 jobs, infrastructure"
+    )
+    wrong_order = (
+        "failing_jobs is empty with 0 jobs (infrastructure): escalate instead "
+        "of trigger_pipeline re-run."
+    )
+    good = (
+        "If failing_jobs is empty and the note says 0 jobs, the cause is "
+        "infrastructure: re-run it with `trigger_pipeline` instead of "
+        "escalating."
+    )
+    assert not _explains_zero_jobs_rerun(inverted)
+    assert not _explains_zero_jobs_rerun(wrong_order)
+    assert _explains_zero_jobs_rerun(good)
+
+
 def test_get_pipeline_run_doc_explains_zero_jobs_rerun(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1515,25 +1563,11 @@ def test_get_pipeline_run_doc_explains_zero_jobs_rerun(
     failing_jobs + note means and name trigger_pipeline as the next step."""
     tools = _register_tools_with(monkeypatch, _project())
     doc = tools["get_pipeline_run"].__doc__ or ""
-    import re
 
     paragraphs = [p for p in re.split(r"\n\s*\n", doc) if p.strip()]
 
-    def _explains_zero_jobs_rerun(par: str) -> bool:
-        low = par.lower()
-        return (
-            "failing_jobs" in par
-            and ("empty" in low or "[]" in par)
-            and "0 jobs" in par
-            and "infrastructure" in low
-            and "trigger_pipeline" in par
-            and ("re-run" in low or "rerun" in low or "retry" in low)
-            and "instead of" in low
-            and "escalat" in low
-        )
-
     assert any(_explains_zero_jobs_rerun(p) for p in paragraphs), (
-        "no single docstring paragraph explains empty failing_jobs / 0 jobs "
-        "as infrastructure, names trigger_pipeline and says to re-run "
-        "instead of escalating"
+        "no single docstring paragraph affirmatively explains empty "
+        "failing_jobs / 0 jobs as infrastructure and says to re-run via "
+        "trigger_pipeline instead of escalating"
     )
