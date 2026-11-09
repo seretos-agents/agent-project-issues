@@ -1515,8 +1515,25 @@ def test_get_pipeline_run_doc_explains_zero_jobs_rerun(
     failing_jobs + note means and name trigger_pipeline as the next step."""
     tools = _register_tools_with(monkeypatch, _project())
     doc = tools["get_pipeline_run"].__doc__ or ""
-    low = doc.lower()
-    assert "trigger_pipeline" in doc
-    assert "0 jobs" in doc
-    assert "infrastructure" in low
-    assert doc.index("trigger_pipeline") > doc.index("failing_jobs")
+    import re
+
+    paragraphs = [p for p in re.split(r"\n\s*\n", doc) if p.strip()]
+
+    def _explains_zero_jobs_rerun(par: str) -> bool:
+        low = par.lower()
+        return (
+            "failing_jobs" in par
+            and ("empty" in low or "[]" in par)
+            and "0 jobs" in par
+            and "infrastructure" in low
+            and "trigger_pipeline" in par
+            and ("re-run" in low or "rerun" in low or "retry" in low)
+            and "instead of" in low
+            and "escalat" in low
+        )
+
+    assert any(_explains_zero_jobs_rerun(p) for p in paragraphs), (
+        "no single docstring paragraph explains empty failing_jobs / 0 jobs "
+        "as infrastructure, names trigger_pipeline and says to re-run "
+        "instead of escalating"
+    )
