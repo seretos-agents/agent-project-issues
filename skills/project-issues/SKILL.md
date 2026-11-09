@@ -489,7 +489,10 @@ CI/pipeline triage is a three-tool chain, each step narrowing scope:
    Only this tool returns the `failure` block on the run (failing
    jobs, annotations, log excerpt), and only when the run's
    `conclusion` is "failure" or "cancelled" (GitHub reports a job
-   killed by its own `timeout-minutes` as "cancelled").
+   killed by its own `timeout-minutes` as "cancelled"). A failed run
+   with empty `failing_jobs` and a "0 jobs" note means an
+   infrastructure or workflow-startup failure: re-run it with
+   `trigger_pipeline` instead of escalating.
 3. `get_pipeline_step_log` fetches one failing job's full log, bounded
    to a small slice, when step 2's `log_excerpt` (~30 lines) isn't
    enough. `job_id` must come from `run.failure.failing_jobs[].job_id`

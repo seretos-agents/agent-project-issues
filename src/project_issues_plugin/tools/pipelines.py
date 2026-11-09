@@ -445,9 +445,20 @@ def register(mcp: FastMCP) -> None:
             },
             ...
           ],
-          "note": str | None  # e.g. "logs unavailable"
+          "note": str | None  # e.g. "logs unavailable", or a zero-jobs /
+                              # no-failed-job explanation (see below)
         }
         ```
+
+        On a `failure`-concluded run, an empty `failing_jobs` list with
+        a note saying "0 jobs" means the provider never started or
+        recorded a job, so the cause is an infrastructure or
+        workflow-startup failure. There is no `job_id` to pass on, so
+        re-run it with `trigger_pipeline` on the same ref instead of
+        escalating, and escalate only if the re-run fails the same way.
+        A note saying jobs were recorded but none ended
+        failure/cancelled is a different case that is not necessarily
+        an infrastructure failure, so check the run's jobs first.
 
         `annotations` are normalized across providers (GitHub Check-Run
         annotations, Azure Pipelines timeline-record issues both map

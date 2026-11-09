@@ -18,6 +18,7 @@ explicitly) is unaffected.
 from __future__ import annotations
 
 import json
+import re
 from typing import Callable
 
 import httpx
@@ -1453,3 +1454,120 @@ def test_get_pipeline_run_log_excerpt_not_char_bounded(
     job = result["run"]["failure"]["failing_jobs"][0]
     assert job["log_excerpt"] == huge_excerpt
     assert len(job["log_excerpt"]) > 40_000
+
+
+# --- #410: failed run with zero jobs --------------------------------------
+
+
+def _failed_run_with_jobs(monkeypatch: pytest.MonkeyPatch, run_id: int, jobs: dict):
+    tools = _register_tools_with(monkeypatch, _project())
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        path = req.url.path
+        if path == f"/repos/acme/backend/actions/runs/{run_id}":
+            return _json(_run_payload(
+                run_id, status="completed", conclusion="failure"
+            ))
+        if path == f"/repos/acme/backend/actions/runs/{run_id}/jobs":
+            return _json(jobs)
+        raise AssertionError(f"unexpected request: {req.url}")
+
+    _install_mock(monkeypatch, handler)
+    return tools["get_pipeline_run"](project_id="acme", run_id=str(run_id))
+
+
+def test_get_pipeline_run_zero_jobs_failure_note_suggests_rerun(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#410: a failure-concluded run with zero jobs must carry a non-null,
+    cause-naming note (lib-python-projects v0.4.4). Regression lock for the
+    lib contract through the plugin; cannot be RED on the pinned lib."""
+    result = _failed_run_with_jobs(
+        monkeypatch, 5010, {"total_count": 0, "jobs": []}
+    )
+    assert "error" not in result, result
+    failure = result["run"]["failure"]
+    assert set(failure) == {"failing_jobs", "note"}
+    assert failure["failing_jobs"] == []
+    assert isinstance(failure["note"], str)
+    assert "0 jobs" in failure["note"]
+    assert "re-run" in failure["note"]
+
+
+def test_get_pipeline_run_jobs_none_failed_note_suggests_rerun(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = _failed_run_with_jobs(
+        monkeypatch,
+        5011,
+        {"jobs": [{"id": 1, "name": "build", "conclusion": "success",
+                   "html_url": "https://x/job/1", "steps": []}]},
+    )
+    assert "error" not in result, result
+    failure = result["run"]["failure"]
+    assert failure["failing_jobs"] == []
+    assert "none ended failure/cancelled" in failure["note"]
+
+
+_NEGATION = re.compile(r"\b(do not|don't|dont|never|not|no)\b")
+_RERUN_INSTRUCTION = re.compile(
+    r"\b(re-?run|retry)\w*\b[^.;]*?trigger_pipeline", re.IGNORECASE
+)
+_NOT_ESCALATING = re.compile(r"\b(instead of|rather than) escalat", re.IGNORECASE)
+
+
+def _explains_zero_jobs_rerun(par: str) -> bool:
+    """True if one paragraph affirmatively tells the agent to re-run via
+    trigger_pipeline instead of escalating a zero-job failed run."""
+    par = " ".join(par.split())
+    low = par.lower()
+    if not (
+        "failing_jobs" in par
+        and ("empty" in low or "[]" in par)
+        and "0 jobs" in par
+        and "infrastructure" in low
+    ):
+        return False
+    for m in _RERUN_INSTRUCTION.finditer(par):
+        before = " ".join(par[: m.start()].split()[-4:]).lower()
+        if _NEGATION.search(before) or _NEGATION.search(m.group(0).lower()):
+            continue
+        if _NOT_ESCALATING.search(par, m.end()):
+            return True
+    return False
+
+
+def test_zero_jobs_rerun_predicate_rejects_inverted_and_accepts_good() -> None:
+    inverted = (
+        "Do NOT re-run with trigger_pipeline; escalate to a human instead. "
+        "failing_jobs empty, 0 jobs, infrastructure"
+    )
+    wrong_order = (
+        "failing_jobs is empty with 0 jobs (infrastructure): escalate instead "
+        "of trigger_pipeline re-run."
+    )
+    good = (
+        "If failing_jobs is empty and the note says 0 jobs, the cause is "
+        "infrastructure: re-run it with `trigger_pipeline` instead of "
+        "escalating."
+    )
+    assert not _explains_zero_jobs_rerun(inverted)
+    assert not _explains_zero_jobs_rerun(wrong_order)
+    assert _explains_zero_jobs_rerun(good)
+
+
+def test_get_pipeline_run_doc_explains_zero_jobs_rerun(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#410: the agent-facing tool description must say what empty
+    failing_jobs + note means and name trigger_pipeline as the next step."""
+    tools = _register_tools_with(monkeypatch, _project())
+    doc = tools["get_pipeline_run"].__doc__ or ""
+
+    paragraphs = [p for p in re.split(r"\n\s*\n", doc) if p.strip()]
+
+    assert any(_explains_zero_jobs_rerun(p) for p in paragraphs), (
+        "no single docstring paragraph affirmatively explains empty "
+        "failing_jobs / 0 jobs as infrastructure and says to re-run via "
+        "trigger_pipeline instead of escalating"
+    )
