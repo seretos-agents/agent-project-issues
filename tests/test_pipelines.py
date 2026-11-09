@@ -1453,3 +1453,70 @@ def test_get_pipeline_run_log_excerpt_not_char_bounded(
     job = result["run"]["failure"]["failing_jobs"][0]
     assert job["log_excerpt"] == huge_excerpt
     assert len(job["log_excerpt"]) > 40_000
+
+
+# --- #410: failed run with zero jobs --------------------------------------
+
+
+def _failed_run_with_jobs(monkeypatch: pytest.MonkeyPatch, run_id: int, jobs: dict):
+    tools = _register_tools_with(monkeypatch, _project())
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        path = req.url.path
+        if path == f"/repos/acme/backend/actions/runs/{run_id}":
+            return _json(_run_payload(
+                run_id, status="completed", conclusion="failure"
+            ))
+        if path == f"/repos/acme/backend/actions/runs/{run_id}/jobs":
+            return _json(jobs)
+        raise AssertionError(f"unexpected request: {req.url}")
+
+    _install_mock(monkeypatch, handler)
+    return tools["get_pipeline_run"](project_id="acme", run_id=str(run_id))
+
+
+def test_get_pipeline_run_zero_jobs_failure_note_suggests_rerun(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#410: a failure-concluded run with zero jobs must carry a non-null,
+    cause-naming note (lib-python-projects v0.4.4). Regression lock for the
+    lib contract through the plugin; cannot be RED on the pinned lib."""
+    result = _failed_run_with_jobs(
+        monkeypatch, 5010, {"total_count": 0, "jobs": []}
+    )
+    assert "error" not in result, result
+    failure = result["run"]["failure"]
+    assert set(failure) == {"failing_jobs", "note"}
+    assert failure["failing_jobs"] == []
+    assert isinstance(failure["note"], str)
+    assert "0 jobs" in failure["note"]
+    assert "re-run" in failure["note"]
+
+
+def test_get_pipeline_run_jobs_none_failed_note_suggests_rerun(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = _failed_run_with_jobs(
+        monkeypatch,
+        5011,
+        {"jobs": [{"id": 1, "name": "build", "conclusion": "success",
+                   "html_url": "https://x/job/1", "steps": []}]},
+    )
+    assert "error" not in result, result
+    failure = result["run"]["failure"]
+    assert failure["failing_jobs"] == []
+    assert "none ended failure/cancelled" in failure["note"]
+
+
+def test_get_pipeline_run_doc_explains_zero_jobs_rerun(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#410: the agent-facing tool description must say what empty
+    failing_jobs + note means and name trigger_pipeline as the next step."""
+    tools = _register_tools_with(monkeypatch, _project())
+    doc = tools["get_pipeline_run"].__doc__ or ""
+    low = doc.lower()
+    assert "trigger_pipeline" in doc
+    assert "0 jobs" in doc
+    assert "infrastructure" in low
+    assert doc.index("trigger_pipeline") > doc.index("failing_jobs")
