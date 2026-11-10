@@ -1818,13 +1818,6 @@ def register(mcp: FastMCP) -> None:
     def add_comment(project_id: str, ticket_id: str, body: Annotated[str, Field(description="Comment content. Do not include '#ai-generated' — the server prepends it automatically.")], attachments: Annotated[list[ImageAttachmentArg] | None, Field(description=ATTACHMENTS_DESC)] = None, response: Annotated[Literal["light", "full"], Field(description=COMMENT_RESPONSE_DESC)] = "light") -> dict:
         """Add a comment to a ticket.
 
-        `attachments` attaches local image files (a list of `{path, alt?}`,
-        absolute paths); see the parameter description for the allowed types,
-        the (absent) per-call limit, provider support and where the files are
-        stored. A failure names the offending file.
-
-        Default `response="light"`; pass `response="full"` for the full comment.
-
         CAUTION: do NOT include `#ai-generated` in `body` — the server
         prepends it automatically. If you are doing a read-modify-write
         loop (get body → edit → update), you must strip the marker from
@@ -1835,6 +1828,13 @@ def register(mcp: FastMCP) -> None:
         The body is automatically prefixed with `#ai-generated\\n\\n`.
         Do not add that prefix yourself. Requires the project's
         `issues.modify` permission.
+
+        `attachments` attaches local image files (a list of `{path, alt?}`,
+        absolute paths); see the parameter description for the allowed types,
+        the (absent) per-call limit, provider support and where the files are
+        stored. A failure names the offending file.
+
+        Default `response="light"`; pass `response="full"` for the full comment.
 
         The returned `comment.id` is a bare note id and is **not
         self-contained on GitLab or Azure DevOps** — those providers
