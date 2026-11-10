@@ -26,9 +26,14 @@ to substitute a deterministic project list without hitting the disk.
 from __future__ import annotations
 
 import re
+from contextlib import contextmanager
+from pathlib import Path
+
+from pydantic import BaseModel
 
 from lib_python_projects import ProjectConfig, load_projects, resolve_token
 from lib_python_projects import markers as _markers
+from lib_python_projects.providers import attachments as _attachments
 from lib_python_projects.providers.azuredevops import (
     AzureDevOpsError,
     AzureDevOpsProvider,
@@ -775,6 +780,66 @@ def _with_auth_hint(exc, hint: str) -> str:
     return message
 
 
+# ---- image attachments (ticket #414) ----------------------------------------
+
+
+class ImageAttachmentArg(BaseModel):
+    """One local image to attach: an absolute `path` and optional `alt` text."""
+
+    path: str
+    alt: str | None = None
+
+
+ATTACHMENTS_DESC = (
+    "Local image files to attach, as a list of {path, alt?} objects: `path` "
+    "must be an ABSOLUTE path on the machine running this server (a relative "
+    "path is refused), `alt` is optional alt text. Allowed types: "
+    "gif/jpeg/jpg/png/svg/webp. There is no per-call limit on the number of "
+    "images; the library does not enforce one. "
+    "Image attachments work on GitHub only; GitLab and Azure DevOps return an "
+    "error naming the files that were not attached. "
+    "Files are committed through the GitHub Contents API to the "
+    "ticket-attachments branch of the same repository, so the token needs "
+    "push access to the repo. "
+    "A body reference ![alt](<same absolute path>) is rewritten to the "
+    "uploaded copy; files the body does not reference are appended as images. "
+    "All files are validated before anything is uploaded, and a failure names "
+    "the offending file and the reason."
+)
+
+
+def _image_attachments(raw) -> list:
+    """Validate caller-supplied attachments; return the lib's dataclasses.
+
+    Runs before any provider call or plugin-side write: refuses relative
+    paths and (via the lib's local-only `prepare_attachments`) missing files
+    and unsupported types, so nothing is uploaded or created on a bad input.
+    """
+    items = []
+    for entry in raw or []:
+        if isinstance(entry, BaseModel):
+            entry = entry.model_dump()
+        path, alt = entry["path"], entry.get("alt")
+        if not Path(path).is_absolute():
+            raise ValueError(
+                f"{path}: attachment path must be absolute (the server's "
+                "working directory is not the caller's)"
+            )
+        items.append(_attachments.ImageAttachment(path=path, alt=alt))
+    _attachments.prepare_attachments(items)
+    return items
+
+
+@contextmanager
+def _naming_attachment_files(items):
+    """Re-raise the lib's unsupported-provider error naming the files."""
+    try:
+        yield
+    except _attachments.AttachmentUnsupported as exc:
+        names = ", ".join(Path(str(i.path)).name for i in items)
+        raise NotImplementedError(f"{exc}; files not attached: {names}") from exc
+
+
 def _safe(call):
     """Execute `call()` and translate known errors to a dict with `error`.
 
@@ -805,6 +870,10 @@ def _safe(call):
 
 
 __all__ = [
+    "ImageAttachmentArg",
+    "ATTACHMENTS_DESC",
+    "_image_attachments",
+    "_naming_attachment_files",
     "_PROVIDERS",
     "_resolve",
     "_provider_for",
