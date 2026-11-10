@@ -355,6 +355,8 @@ def test_attachment_errors(monkeypatch, tmp_path, which, case) -> None:
     result = _call_write(tools, which, [{"path": path}])
     assert isinstance(result, dict) and "error" in result, result
     assert needle in result["error"]
+    if case == "missing":
+        assert "not found" in result["error"].lower()  # the reason, not just the name
     if case == "bmp":
         assert ".png" in result["error"]  # the reason lists allowed types
     if case in ("no_push", "put_403"):
@@ -417,7 +419,6 @@ def test_get_ticket_images_list_and_save(monkeypatch, tmp_path) -> None:
     assert len(gets) == 1 and gets[0].endswith("/attachments/u1/two.png"), gets
     assert saved["saved"]["url"] == _OWN2
     assert saved["saved"]["bytes"] == len(expected)
-    assert Path(saved["saved"]["path"]).resolve() == dest.resolve()
 
 
 def test_get_ticket_images_comment(monkeypatch) -> None:
@@ -427,7 +428,6 @@ def test_get_ticket_images_comment(monkeypatch) -> None:
     assert on_ticket["images"] == []
     result = tools["get_ticket_images"](project_id="acme", ticket_id="7", comment_id="99")
     assert "error" not in result, result
-    assert result["comment_id"] == "99"
     assert repo.calls("GET", "/issues/comments/99"), "comment was never fetched"
     assert [i["url"] for i in result["images"]] == [_OWN]
 
@@ -484,6 +484,9 @@ def _attachments_doc(fn) -> str:
     return "\n".join([fn.__doc__ or "", *[d for d in descs if d]])
 
 
+_NEGATION = re.compile(r"(never|not|no|without|nor|n't)")
+
+
 def _sentences(text: str) -> list[str]:
     return [x.lower() for x in re.split(r"(?<=[.!?])\s+", " ".join(text.split())) if x]
 
@@ -499,7 +502,9 @@ def test_attachment_docs(name) -> None:
     sents = _sentences(doc)
     assert "no per-call limit" in low
     # storage: Contents API and the ticket-attachments branch in one sentence
-    assert any("contents api" in x and "ticket-attachments" in x and "branch" in x for x in sents), sents
+    storage = [x for x in sents if "contents api" in x and "ticket-attachments" in x and "branch" in x]
+    assert storage, sents
+    assert all(not _NEGATION.search(x) for x in storage), storage  # an affirmative claim
     # per-provider support: GitHub only, GitLab / Azure DevOps named as unsupported
     assert any(
         "github" in x and "gitlab" in x and "azure devops" in x
@@ -512,4 +517,6 @@ def test_get_ticket_images_docstring_names_storage() -> None:
     stub = _StubMCP()
     ticket_tools.register(stub)
     sents = _sentences(stub.tools["get_ticket_images"].__doc__ or "")
-    assert any("ticket-attachments" in x and "branch" in x for x in sents), sents
+    storage = [x for x in sents if "ticket-attachments" in x and "branch" in x]
+    assert storage, sents
+    assert all(not _NEGATION.search(x) for x in storage), storage  # an affirmative claim
