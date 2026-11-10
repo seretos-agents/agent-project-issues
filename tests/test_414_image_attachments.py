@@ -165,6 +165,10 @@ class _Repo:
             if m == "PATCH" and b'"body"' in req.content:
                 body = json.loads(req.content)["body"]
             return _json(_issue(7, body))
+        if p == f"{base}/issues/7/comments" and m == "GET":
+            return _json([])  # get_ticket also lists the ticket's comments
+        if p == f"{base}/labels/bug" and m == "GET":
+            return _json({"name": "bug"})  # update_ticket's labels_add existence check
         if p == f"{base}/issues/7/comments" and m == "POST":
             return _json(_comment(99, json.loads(req.content)["body"]), 201)
         if p == f"{base}/issues/comments/99" and m == "GET":

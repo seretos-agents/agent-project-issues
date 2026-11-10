@@ -51,7 +51,8 @@ are otherwise the easiest capabilities to miss or get wrong.
   `list_custom_fields` discover the provider's field schema;
   `list_board_columns` resolve board columns to native names;
   `ensure_board_column` idempotently create a board column;
-  `add_comment` post a comment on a ticket.
+  `add_comment` post a comment on a ticket;
+  `get_ticket_images` list a ticket's or comment's images and save one locally.
 - **comments** — `list_comments` list a ticket's comments;
   `get_comment` fetch one comment; `update_comment` edit a comment's
   body; `delete_comment` remove a comment.
@@ -100,6 +101,24 @@ are otherwise the easiest capabilities to miss or get wrong.
   `merge_pr`, `add_relation`, `add_pr_comment`, `add_pr_review_comment` and
   `submit_pr_review` echo only a few identifying fields. Pass
   `response="full"` when you need the body, comments or review data back.
+
+## Image attachments
+
+`create_ticket`, `update_ticket` and `add_comment` take `attachments`, a list
+of `{path, alt?}` local image files. Use **absolute** paths (a relative path is
+refused); allowed types are gif, jpeg, jpg, png, svg and webp. Reference a file
+in the body as `![alt](<same absolute path>)` to place it, or leave it out and
+it is appended. `update_ticket` needs `body` whenever it gets `attachments`.
+
+Attachments work on **GitHub only** (GitLab and Azure DevOps return an error
+naming the files). The files are committed to the `ticket-attachments` branch
+of the same repo, so the token needs push access. A bad file, a refused
+template or an unsupported provider is reported as `{"error": ...}` before
+anything is created.
+
+To read images back, call `get_ticket_images(project_id, ticket_id)` (add
+`comment_id` for a comment). It lists `{index, alt, url}`; pass `save_index`
+and an absolute `dest_path` to save one to disk.
 
 ## Ticket templates
 

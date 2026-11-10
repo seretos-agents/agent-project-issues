@@ -11,6 +11,7 @@ import inspect
 import re
 import time
 from dataclasses import asdict
+from pathlib import Path
 from typing import Annotated, Any, Callable, Literal
 
 from pydantic import Field
@@ -24,6 +25,10 @@ from lib_python_projects.providers.github import GitHubError
 from lib_python_projects.providers.gitlab import GitLabError
 from project_issues_plugin.tools import _label_board
 from project_issues_plugin.tools._providers import (
+    ATTACHMENTS_DESC,
+    ImageAttachmentArg,
+    _image_attachments,
+    _naming_attachment_files,
     _normalize_id,
     _provider_for,
     _require_board_manage,
@@ -784,6 +789,9 @@ def register(mcp: FastMCP) -> None:
                 "ticket — see the tool's docstring."
             )),
         ] = None,
+        attachments: Annotated[
+            list[ImageAttachmentArg] | None, Field(description=ATTACHMENTS_DESC)
+        ] = None,
         response: Annotated[
             Literal["light", "full"], Field(description=TICKET_RESPONSE_DESC)
         ] = "light",
@@ -857,11 +865,18 @@ def register(mcp: FastMCP) -> None:
         board binding) surface as `{"error": ...}`, not a traceback; the
         ticket is not created in that case.
 
+        `attachments` attaches local image files (a list of `{path, alt?}`,
+        absolute paths); see the parameter description for the allowed types,
+        the (absent) per-call limit, provider support and where the files are
+        stored. They are validated before the template gate and before any
+        upload, and a failure names the offending file.
+
         Default `response="light"`; pass `response="full"` for body/comments/review data.
 
         Requires the project's `issues.create` permission.
         """
         def go() -> dict:
+            image_items = _image_attachments(attachments)
             project = _resolve(project_id)
             _require_issues_create(project)
             token = _require_token(project)
@@ -923,12 +938,16 @@ def register(mcp: FastMCP) -> None:
             effective_custom_fields, board_warning = _default_board_custom_fields(
                 project, provider, token, label_mode_custom_fields, off_board,
             )
+            create_kwargs: dict[str, Any] = {}
+            if image_items:
+                create_kwargs["attachments"] = image_items
             try:
-                ticket = provider.create_ticket(
-                    project, token, effective_title, body, effective_labels,
-                    assignees or [], status=effective_status,
-                    custom_fields=effective_custom_fields,
-                )
+                with _naming_attachment_files(image_items):
+                    ticket = provider.create_ticket(
+                        project, token, effective_title, body, effective_labels,
+                        assignees or [], status=effective_status,
+                        custom_fields=effective_custom_fields, **create_kwargs,
+                    )
             except (GitHubError, GitLabError, AzureDevOpsError) as exc:
                 raise _rewrap_azure_unknown_field(
                     exc, custom_fields=effective_custom_fields,
@@ -1009,6 +1028,9 @@ def register(mcp: FastMCP) -> None:
                 "self-correcting payload instead of updating the ticket — "
                 "see the tool's docstring."
             )),
+        ] = None,
+        attachments: Annotated[
+            list[ImageAttachmentArg] | None, Field(description=ATTACHMENTS_DESC)
         ] = None,
         response: Annotated[
             Literal["light", "full"], Field(description=TICKET_RESPONSE_DESC)
@@ -1131,6 +1153,13 @@ def register(mcp: FastMCP) -> None:
         `None` or an empty dict `{}` means "no custom fields" and is treated
         as though the argument were absent.
 
+        `attachments` attaches local image files (a list of `{path, alt?}`,
+        absolute paths) and requires `body` in the same call, because the
+        images are referenced from the body; see the parameter description
+        for the allowed types, the (absent) per-call limit, provider support
+        and where the files are stored. They are validated before any write,
+        and a failure names the offending file.
+
         Label mode (#365): on a project whose `board` block has
         `columns` but no `binding` (any provider, including GitLab),
         `{"Status": <logical column>}` instead moves the ticket between
@@ -1149,6 +1178,13 @@ def register(mcp: FastMCP) -> None:
         `list_board_columns`' `source: "labels"` rows for each column's
         resolved label.
         """
+        if attachments and body is None:
+            return {
+                "error": (
+                    "attachments require a body: the images are referenced "
+                    "from the body, so pass `body` together with `attachments`."
+                )
+            }
         # Reject empty calls explicitly (ticket #48 finding 4 / #49 finding 4).
         # `labels_add=[]` etc. are treated as "no action" — only non-empty
         # collections and non-None scalars count.
@@ -1172,6 +1208,7 @@ def register(mcp: FastMCP) -> None:
             }
 
         def go() -> dict:
+            image_items = _image_attachments(attachments)
             project = _resolve(project_id)
             _require_issues_modify(project)
             token = _require_token(project)
@@ -1323,8 +1360,11 @@ def register(mcp: FastMCP) -> None:
             )
             if label_mode_custom_fields and cf_supported:
                 kwargs["custom_fields"] = label_mode_custom_fields
+            if image_items:
+                kwargs["attachments"] = image_items
             try:
-                ticket = provider.update_ticket(project, token, normalized_id, **kwargs)
+                with _naming_attachment_files(image_items):
+                    ticket = provider.update_ticket(project, token, normalized_id, **kwargs)
             except (GitHubError, GitLabError, AzureDevOpsError) as exc:
                 # 404 and 422 are disjoint statuses, so applying the 404
                 # and 422 rewraps unconditionally is safe regardless of
@@ -1775,8 +1815,13 @@ def register(mcp: FastMCP) -> None:
         return _safe(go)
 
     @mcp.tool()
-    def add_comment(project_id: str, ticket_id: str, body: Annotated[str, Field(description="Comment content. Do not include '#ai-generated' — the server prepends it automatically.")], response: Annotated[Literal["light", "full"], Field(description=COMMENT_RESPONSE_DESC)] = "light") -> dict:
+    def add_comment(project_id: str, ticket_id: str, body: Annotated[str, Field(description="Comment content. Do not include '#ai-generated' — the server prepends it automatically.")], attachments: Annotated[list[ImageAttachmentArg] | None, Field(description=ATTACHMENTS_DESC)] = None, response: Annotated[Literal["light", "full"], Field(description=COMMENT_RESPONSE_DESC)] = "light") -> dict:
         """Add a comment to a ticket.
+
+        `attachments` attaches local image files (a list of `{path, alt?}`,
+        absolute paths); see the parameter description for the allowed types,
+        the (absent) per-call limit, provider support and where the files are
+        stored. A failure names the offending file.
 
         Default `response="light"`; pass `response="full"` for the full comment.
 
@@ -1811,6 +1856,7 @@ def register(mcp: FastMCP) -> None:
         separate endpoints, so no such aliasing happens there.
         """
         def go() -> dict:
+            image_items = _image_attachments(attachments)
             project = _resolve(project_id)
             _require_issues_modify(project)
             token = _require_token(project)
@@ -1818,8 +1864,14 @@ def register(mcp: FastMCP) -> None:
             normalized_id = _normalize_id(project, ticket_id)
             if not body or not body.strip():
                 raise ValueError("comment body must be non-empty")
+            comment_kwargs: dict[str, Any] = {}
+            if image_items:
+                comment_kwargs["attachments"] = image_items
             try:
-                comment = provider.add_comment(project, token, normalized_id, body)
+                with _naming_attachment_files(image_items):
+                    comment = provider.add_comment(
+                        project, token, normalized_id, body, **comment_kwargs,
+                    )
             except (GitHubError, GitLabError, AzureDevOpsError) as exc:
                 raise _rewrap_404(
                     exc, project_id=project.id, kind="ticket",
@@ -1829,4 +1881,101 @@ def register(mcp: FastMCP) -> None:
             if response == "light":
                 row = pick_light(row, COMMENT_LIGHT_KEYS)
             return {"project_id": project.id, "comment": row}
+        return _safe(go)
+
+    @mcp.tool()
+    def get_ticket_images(
+        project_id: str,
+        ticket_id: str,
+        comment_id: Annotated[
+            str | None,
+            Field(description="List the images of this comment instead of the ticket body."),
+        ] = None,
+        save_index: Annotated[
+            int | None,
+            Field(description="0-based `index` of a listed image to download. Requires `dest_path`."),
+        ] = None,
+        dest_path: Annotated[
+            str | None,
+            Field(description="ABSOLUTE local file path to write the chosen image to; an existing file is overwritten and the parent directory must exist. Requires `save_index`."),
+        ] = None,
+    ) -> dict:
+        """List the images referenced in a ticket's (or comment's) body and optionally save one locally.
+
+        Returns `images`: every Markdown and `<img>` reference in body
+        order as `{index, alt, url}`. Pass `save_index` together with
+        `dest_path` to also download that image; the result then carries
+        `saved: {index, url, path, bytes}`. An existing file at
+        `dest_path` is overwritten.
+
+        Images uploaded through the `attachments` parameter live on the
+        ticket-attachments branch of the project's own repository; only
+        references into that repository can be downloaded, any other URL
+        is refused so the token never leaves for a foreign host. Image
+        attachments are supported on GitHub only; GitLab and Azure DevOps
+        return an error.
+
+        Read-only: requires a token only if the repo is private.
+        """
+        def go() -> dict:
+            if (save_index is None) != (dest_path is None):
+                raise ValueError(
+                    "save_index and dest_path must be given together "
+                    "(or both omitted to just list the images)"
+                )
+            if dest_path is not None and not Path(dest_path).is_absolute():
+                raise ValueError(
+                    f"{dest_path}: dest_path must be an absolute path"
+                )
+            project = _resolve(project_id)
+            provider = _provider_for(project)
+            token = resolve_token(project)
+            normalized_ticket = _normalize_id(project, ticket_id)
+            normalized_comment = (
+                _normalize_id(project, comment_id) if comment_id is not None else None
+            )
+            try:
+                assets = provider.list_ticket_images(
+                    project, token, normalized_ticket, comment_id=normalized_comment,
+                )
+            except (GitHubError, GitLabError, AzureDevOpsError) as exc:
+                if normalized_comment is not None:
+                    raise _rewrap_404(
+                        exc, project_id=project.id, kind="comment",
+                        ident=normalized_comment,
+                    )
+                raise _rewrap_404(
+                    exc, project_id=project.id, kind="ticket",
+                    ident=normalized_ticket,
+                )
+            images = [
+                {"index": i, "alt": a.alt, "url": a.url} for i, a in enumerate(assets)
+            ]
+            result: dict[str, Any] = {
+                "project_id": project.id,
+                "ticket_id": normalized_ticket,
+                "comment_id": normalized_comment,
+                "images": images,
+            }
+            if save_index is not None:
+                if not 0 <= save_index < len(images):
+                    raise ValueError(
+                        f"save_index {save_index} is out of range: "
+                        f"{len(images)} image(s) listed"
+                    )
+                chosen = images[save_index]
+                try:
+                    written = provider.download_image(
+                        project, token, chosen["url"], dest_path,
+                    )
+                    size = Path(written).stat().st_size
+                except OSError as exc:
+                    raise ValueError(
+                        f"could not write image to {dest_path}: {exc}"
+                    ) from exc
+                result["saved"] = {
+                    "index": save_index, "url": chosen["url"],
+                    "path": str(written), "bytes": size,
+                }
+            return result
         return _safe(go)

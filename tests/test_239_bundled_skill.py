@@ -244,6 +244,8 @@ _NON_TOOL_WHITELIST = {
     "states", "is_split", "column", "columns", "error", "labels",
     "config_error", "board", "manage", "board.manage", "projects.yml",
     "projects.yaml", "hints.default_open",
+    # Added by ticket #414 (image attachments prose):
+    "attachments", "save_index", "dest_path", "comment_id",
     # Added by ticket #242 (pipeline/label/relation/custom-field prose):
     "branch", "tag", "commit_sha", "recent", "hint", "run_id", "failure",
     "conclusion", "log_excerpt", "mode", "around_failure", "max_lines",
