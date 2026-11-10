@@ -28,8 +28,12 @@ from project_issues_plugin.tools import tickets as ticket_tools
 _PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
 )
-_SERVED = b"\x89PNG-served-bytes\x00\x01\x02"
 _BASE = "https://github.com/acme/backend/blob/ticket-attachments/"
+
+
+def _served_for(path: str) -> bytes:
+    """Distinct bytes per image file so a save of the wrong image is visible."""
+    return b"PNG-served:" + path.rsplit("/", 1)[-1].encode()
 
 
 # ---------- scaffolding ------------------------------------------------------
@@ -151,7 +155,7 @@ class _Repo:
                 return _json([{"name": "bug.yml", "path": ".github/ISSUE_TEMPLATE/bug.yml", "type": "file"}])
             return _json({"content": base64.b64encode(_BUG_YML.encode()).decode(), "encoding": "base64"})
         if "/contents/" in p and m == "GET":
-            return httpx.Response(200, content=_SERVED)
+            return httpx.Response(200, content=_served_for(p))
         if p == f"{base}/labels" and m == "POST":
             return _json({"name": "x"}, 201)
         if p == f"{base}/issues" and m == "POST":
@@ -326,7 +330,10 @@ def _call_write(tools, which: str, attachments):
     if which == "create_ticket":
         return tools["create_ticket"](project_id="acme", title="T", body="b", attachments=attachments)
     if which == "update_ticket":
-        return tools["update_ticket"](project_id="acme", ticket_id="7", body="b", attachments=attachments)
+        # labels_add puts update_ticket in label mode (ensure_label write)
+        return tools["update_ticket"](
+            project_id="acme", ticket_id="7", body="b", labels_add=["bug"], attachments=attachments,
+        )
     return tools["add_comment"](project_id="acme", ticket_id="7", body="b", attachments=attachments)
 
 
@@ -355,8 +362,9 @@ def test_attachment_errors(monkeypatch, tmp_path, which, case) -> None:
     if case == "relative":
         assert "absolute" in result["error"].lower()
     if which == "update_ticket" and case in ("missing", "bmp", "relative"):
-        # the label-mode ensure_label write must not have happened either
-        assert repo.seen == []
+        # local validation must precede the label-mode ensure_label write:
+        # no request of any kind (no POST /labels, no pre-flight) was made
+        assert repo.seen == [], [(r.method, r.url.path) for r in repo.seen]
     assert repo.issue_or_comment_writes() == []
 
 
@@ -389,7 +397,7 @@ def _listing_body() -> str:
 
 
 def test_get_ticket_images_list_and_save(monkeypatch, tmp_path) -> None:
-    _Repo(monkeypatch, ticket_body=_listing_body())
+    repo = _Repo(monkeypatch, ticket_body=_listing_body())
     tools = _register(monkeypatch, _project())
     listing = tools["get_ticket_images"](project_id="acme", ticket_id="7")
     assert "error" not in listing, listing
@@ -402,25 +410,30 @@ def test_get_ticket_images_list_and_save(monkeypatch, tmp_path) -> None:
         project_id="acme", ticket_id="7", save_index=imgs[1]["index"], dest_path=str(dest),
     )
     assert "error" not in saved, saved
-    assert dest.read_bytes() == _SERVED
+    expected = _served_for("two.png")
+    assert expected != _served_for("own.png")
+    assert dest.read_bytes() == expected  # the chosen index's bytes, not another image's
+    gets = [r.url.path for r in repo.calls("GET", "/contents/")]
+    assert len(gets) == 1 and gets[0].endswith("/attachments/u1/two.png"), gets
     assert saved["saved"]["url"] == _OWN2
-    assert saved["saved"]["bytes"] == len(_SERVED)
-    assert Path(saved["saved"]["path"]) == dest
+    assert saved["saved"]["bytes"] == len(expected)
+    assert Path(saved["saved"]["path"]).resolve() == dest.resolve()
 
 
 def test_get_ticket_images_comment(monkeypatch) -> None:
-    _Repo(monkeypatch, ticket_body="no images", comment_body=f"c ![k]({_OWN})")
+    repo = _Repo(monkeypatch, ticket_body="no images", comment_body=f"c ![k]({_OWN})")
     tools = _register(monkeypatch, _project())
     on_ticket = tools["get_ticket_images"](project_id="acme", ticket_id="7")
     assert on_ticket["images"] == []
     result = tools["get_ticket_images"](project_id="acme", ticket_id="7", comment_id="99")
     assert "error" not in result, result
     assert result["comment_id"] == "99"
+    assert repo.calls("GET", "/issues/comments/99"), "comment was never fetched"
     assert [i["url"] for i in result["images"]] == [_OWN]
 
 
 def test_get_ticket_images_refusals(monkeypatch, tmp_path) -> None:
-    _Repo(monkeypatch, ticket_body=_listing_body())
+    repo = _Repo(monkeypatch, ticket_body=_listing_body())
     tools = _register(monkeypatch, _project())
     imgs = tools["get_ticket_images"](project_id="acme", ticket_id="7")["images"]
     own_idx = imgs[0]["index"]
@@ -430,10 +443,16 @@ def test_get_ticket_images_refusals(monkeypatch, tmp_path) -> None:
     def call(**kw):
         return tools["get_ticket_images"](project_id="acme", ticket_id="7", **kw)
 
+    rel = call(save_index=own_idx, dest_path="rel/o.png")
+    assert "error" in rel, rel
+    # refused for being relative, not incidentally for a missing parent directory
+    assert "absolute" in rel["error"].lower(), rel
+    assert repo.calls("GET", "/contents/") == []  # nothing downloaded
+    assert not (Path.cwd() / "rel" / "o.png").exists()
+
     cases = {
         "foreign": call(save_index=foreign_idx, dest_path=dest),
         "bad_index": call(save_index=99, dest_path=dest),
-        "relative_dest": call(save_index=own_idx, dest_path="rel/o.png"),
         "only_index": call(save_index=own_idx),
         "only_dest": call(dest_path=dest),
         "missing_parent": call(save_index=own_idx, dest_path=str(tmp_path / "nope" / "o.png")),
@@ -465,19 +484,32 @@ def _attachments_doc(fn) -> str:
     return "\n".join([fn.__doc__ or "", *[d for d in descs if d]])
 
 
+def _sentences(text: str) -> list[str]:
+    return [x.lower() for x in re.split(r"(?<=[.!?])\s+", " ".join(text.split())) if x]
+
+
 @pytest.mark.parametrize("name", ["create_ticket", "update_ticket", "add_comment"])
 def test_attachment_docs(name) -> None:
     stub = _StubMCP()
     ticket_tools.register(stub)
-    low = _attachments_doc(stub.tools[name]).lower()
+    doc = _attachments_doc(stub.tools[name])
+    low = doc.lower()
     for ext in attachments_lib._IMAGE_TYPES:
         assert ext.lstrip(".") in low, ext
-    for token in ("no per-call limit", "ticket-attachments", "contents api", "gitlab", "azure devops"):
-        assert token in low, token
+    sents = _sentences(doc)
+    assert "no per-call limit" in low
+    # storage: Contents API and the ticket-attachments branch in one sentence
+    assert any("contents api" in x and "ticket-attachments" in x and "branch" in x for x in sents), sents
+    # per-provider support: GitHub only, GitLab / Azure DevOps named as unsupported
+    assert any(
+        "github" in x and "gitlab" in x and "azure devops" in x
+        and ("not" in x or "only" in x or "unsupported" in x)
+        for x in sents
+    ), sents
 
 
 def test_get_ticket_images_docstring_names_storage() -> None:
     stub = _StubMCP()
     ticket_tools.register(stub)
-    doc = (stub.tools["get_ticket_images"].__doc__ or "").lower()
-    assert "ticket-attachments" in doc
+    sents = _sentences(stub.tools["get_ticket_images"].__doc__ or "")
+    assert any("ticket-attachments" in x and "branch" in x for x in sents), sents
