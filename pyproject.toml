@@ -55,3 +55,6 @@ addopts = "-ra --strict-markers"
 # a legitimate test ever needs longer than this, raise the value here --
 # don't delete the key.
 timeout = 60
+markers = [
+    "live_github: hits a real GitHub repo; needs PROJECT_ISSUES_LIVE_GITHUB_TOKEN and PROJECT_ISSUES_LIVE_GITHUB_REPO",
+]
